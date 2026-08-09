@@ -451,7 +451,7 @@ export default {
         sections: cleanSections,
         photos: cleanPhotos,
         companyName: companyName ? String(companyName).slice(0, 100) : null,
-        companyLogo: companyLogo ? String(companyLogo).slice(0, 500000) : null, // a small logo data URL is fine; a full-size report photo set is not — that's what `photos[].url` is for
+        companyLogo: companyLogo ? String(companyLogo).slice(0, 3000000) : null, // raised 2026-08-09 — the original 500,000-char cap was silently truncating real logo files (a 674KB PNG encodes to ~899K base64 chars), corrupting the image data since PNGs decode top-to-bottom and a truncated file just stops rendering partway through. KV supports values up to 25MB, so there's plenty of headroom here.
         companyPhone: companyPhone ? String(companyPhone).slice(0, 30) : null,
         companyEmail: companyEmail ? String(companyEmail).slice(0, 150) : null,
         publishedAt: Date.now(),

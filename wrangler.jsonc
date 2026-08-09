@@ -11,7 +11,7 @@
   "r2_buckets": [
     {
       "binding": "PHOTO_BUCKET",
-      "bucket_name": "PASTE_YOUR_REAL_R2_BUCKET_NAME_HERE"
+      "bucket_name": "inspector-portal-photos"
     }
   ]
 }

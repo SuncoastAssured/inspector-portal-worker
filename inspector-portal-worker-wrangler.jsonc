@@ -1,0 +1,11 @@
+{
+  "name": "inspector-portal-worker",
+  "main": "inspector-portal-worker.js",
+  "compatibility_date": "2026-08-08",
+  "kv_namespaces": [
+    {
+      "binding": "PORTAL_KV",
+      "id": "dfe34d7fc71b420391f85261696754b9"
+    }
+  ]
+}

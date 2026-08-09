@@ -16,15 +16,18 @@
 // has no crew/seat concept (one flat license per business), so none of
 // that applies here.
 //
-// ONE ENDPOINT PAIR, ONE JOB:
+// TWO ENDPOINT PAIRS, TWO JOBS:
 //
 // GET  /report?id=<unguessable>&biz=<companyId>  — public, no login.
-//   Returns a deliberately narrow slice of a completed inspection:
-//   property name, visit date, condition score, pass/fail summary,
-//   a curated set of photos, company branding. NEVER the full raw
-//   checklist (item-by-item notes), vendor contacts, or pricing —
-//   stripped server-side even if a caller's write payload includes
-//   them, never just trusted to have been left out client-side.
+//   Returns the full itemized inspection report: property name, visit
+//   date, condition score, pass/fail summary, every checklist section
+//   and item (label/status/note), each item's own photos (as photoId
+//   references into the endpoints below, never raw image data), and
+//   company branding. NEVER internal-only fields not explicitly
+//   whitelisted here (vendor contacts, pricing, anything not meant for
+//   a homeowner) — stripped server-side even if a caller's write
+//   payload includes them, never just trusted to have been left out
+//   client-side.
 //
 // POST /report  — requires a valid, verified license token (same
 //   verification the app itself already performs). The app calls this
@@ -33,6 +36,13 @@
 //   consent-gated feature already in this app (AI features, EULA,
 //   data-warning notice all work the same way: nothing sends data off
 //   the device without an explicit, visible action first).
+//
+// GET/POST /photo — the actual image bytes, stored in R2 (added
+//   2026-08-09, alongside the move from a flat top-level photo gallery
+//   to per-item photos above). Same license-verified-write/public-read
+//   shape as /report, just binary instead of JSON — see the routes
+//   themselves further down for the full reasoning on caching and size
+//   limits, which differ from /report's own choices for good reason.
 //
 // The company_id in a verified write always comes from INSIDE the
 // signed token, never from a client-supplied field — this is the
@@ -197,8 +207,8 @@ function renderPortalPage(id, companyId) {
   .summary-chip{ flex:1; text-align:center; background:var(--sand); border-radius:10px; padding:10px 6px; }
   .summary-chip .num{ font-size:20px; font-weight:700; }
   .summary-chip .lbl{ font-size:11px; color:#5A6B75; text-transform:uppercase; letter-spacing:0.03em; }
-  .photos{ display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin-top:16px; }
-  .photos img{ width:100%; aspect-ratio:4/3; object-fit:cover; border-radius:8px; }
+  .item-photos{ display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
+  .item-photos img{ width:72px; height:72px; object-fit:cover; border-radius:6px; cursor:pointer; }
   .visit-summary{ font-size:14px; line-height:1.5; color:var(--ink); margin:0 0 4px; }
   .group-title{ font-size:15px; font-weight:700; color:var(--navy); margin:22px 0 8px; padding-top:4px; border-top:1px solid var(--line); }
   .group-title:first-child{ border-top:none; margin-top:0; }
@@ -244,8 +254,6 @@ function renderPortalPage(id, companyId) {
         <div class="summary-chip"><div class="num" id="failNum" style="color:var(--coral);">–</div><div class="lbl">Flagged</div></div>
         <div class="summary-chip"><div class="num" id="totalNum">–</div><div class="lbl">Total items</div></div>
       </div>
-
-      <div class="photos hidden" id="photosGrid"></div>
 
       <p class="visit-summary hidden" id="visitSummaryText"></p>
     </div>
@@ -298,17 +306,6 @@ function renderPortalPage(id, companyId) {
     document.getElementById("failNum").textContent = r.failCount != null ? r.failCount : "–";
     document.getElementById("totalNum").textContent = r.totalCount != null ? r.totalCount : "–";
 
-    if (r.photos && r.photos.length) {
-      const grid = document.getElementById("photosGrid");
-      grid.classList.remove("hidden");
-      r.photos.forEach(p => {
-        const img = document.createElement("img");
-        img.src = p.url;
-        img.alt = p.caption || "";
-        grid.appendChild(img);
-      });
-    }
-
     if (r.visitSummary) {
       const summaryEl = document.getElementById("visitSummaryText");
       summaryEl.textContent = r.visitSummary; // textContent, not innerHTML — this is inspector-typed free text reaching a public page
@@ -358,6 +355,20 @@ function renderPortalPage(id, companyId) {
             row.appendChild(note);
           }
 
+          if (item.photos && item.photos.length) {
+            const photoRow = document.createElement("div");
+            photoRow.className = "item-photos";
+            item.photos.forEach(p => {
+              const img = document.createElement("img");
+              img.src = "/photo/" + p.photoId + "?biz=" + encodeURIComponent(biz);
+              img.alt = p.caption || "";
+              img.loading = "lazy";
+              img.addEventListener("click", () => window.open(img.src, "_blank"));
+              photoRow.appendChild(img);
+            });
+            row.appendChild(photoRow);
+          }
+
           container.appendChild(row);
         });
       });
@@ -405,7 +416,7 @@ export default {
       const companyId = await getVerifiedCompanyId(request, body);
       if (!companyId) return jsonResponse({ error: "Unauthorized" }, 401);
 
-      const { reportId, propertyName, visitDate, visitSummary, conditionScore, passCount, failCount, totalCount, sections, photos, companyName, companyLogo, companyPhone, companyEmail } = body || {};
+      const { reportId, propertyName, visitDate, visitSummary, conditionScore, passCount, failCount, totalCount, sections, companyName, companyLogo, companyPhone, companyEmail } = body || {};
       if (!reportId || !visitDate) {
         return jsonResponse({ error: "reportId and visitDate are required" }, 400);
       }
@@ -420,6 +431,15 @@ export default {
       // caller's payload includes them: only what's explicitly listed
       // here can ever reach a homeowner, regardless of what the app
       // happens to send in the future.
+      //
+      // Photos moved from a flat top-level list to per-item (2026-08-09,
+      // same session as the R2 photo upload endpoints below) — each item
+      // now carries its own `photos: [{photoId, caption}]`, referencing
+      // images already uploaded via POST /photo, never raw image data
+      // in this payload. This is both more useful (a homeowner sees
+      // which specific finding a photo documents, not a disconnected
+      // gallery) and matches how the app actually captures evidence —
+      // per checklist item, via that item's own capture list.
       const cleanSections = Array.isArray(sections)
         ? sections.slice(0, 40).map((s) => ({
             group: s && s.group ? String(s.group).slice(0, 100) : "General",
@@ -428,16 +448,15 @@ export default {
                   label: it && it.label ? String(it.label).slice(0, 300) : "",
                   status: it && ["pass", "fail", "na"].includes(it.status) ? it.status : null,
                   note: it && it.note ? String(it.note).slice(0, 2000) : "",
+                  photos: Array.isArray(it && it.photos)
+                    ? it.photos.slice(0, 6).map((p) => ({
+                        photoId: p && p.photoId ? String(p.photoId).slice(0, 100) : null,
+                        caption: p && p.caption ? String(p.caption).slice(0, 200) : "",
+                      })).filter((p) => p.photoId)
+                    : [],
                 }))
               : [],
           })).filter((s) => s.items.length > 0)
-        : [];
-
-      const cleanPhotos = Array.isArray(photos)
-        ? photos.slice(0, 12).map((p) => ({
-            url: p && p.url ? String(p.url).slice(0, 2000) : null, // expects an already-hosted URL (e.g. via Cloudflare R2, not built yet), not a raw data URL — keeps KV record sizes sane
-            caption: p && p.caption ? String(p.caption).slice(0, 200) : "",
-          })).filter((p) => p.url)
         : [];
 
       const record = {
@@ -449,7 +468,6 @@ export default {
         failCount: failCount != null ? parseInt(failCount, 10) || 0 : null,
         totalCount: totalCount != null ? parseInt(totalCount, 10) || 0 : null,
         sections: cleanSections,
-        photos: cleanPhotos,
         companyName: companyName ? String(companyName).slice(0, 100) : null,
         companyLogo: companyLogo ? String(companyLogo).slice(0, 3000000) : null, // raised 2026-08-09 — the original 500,000-char cap was silently truncating real logo files (a 674KB PNG encodes to ~899K base64 chars), corrupting the image data since PNGs decode top-to-bottom and a truncated file just stops rendering partway through. KV supports values up to 25MB, so there's plenty of headroom here.
         companyPhone: companyPhone ? String(companyPhone).slice(0, 30) : null,
@@ -477,6 +495,57 @@ export default {
       if (!record) return jsonResponse({ error: "Not found" }, 404);
 
       return jsonResponse(record);
+    }
+
+    // ---------------- Upload a photo (write, license-verified) ----------------
+    // Body is the raw compressed JPEG bytes, not JSON — the license
+    // token travels in the X-License-Token header (the same header
+    // /report's write already supports, just the only option here
+    // since there's no JSON body to carry a fallback token in). A
+    // server-side size cap backs up the app's own client-side
+    // compression — never trust a client-side limit alone, the same
+    // reasoning already applied everywhere else in this file.
+    if (request.method === "POST" && url.pathname === "/photo") {
+      const token = request.headers.get("X-License-Token");
+      const companyId = token ? await verifyLicenseAndGetCompanyId(token) : null;
+      if (!companyId) return jsonResponse({ error: "Unauthorized" }, 401);
+
+      const contentType = request.headers.get("Content-Type") || "";
+      if (!contentType.startsWith("image/")) return jsonResponse({ error: "Expected an image body" }, 400);
+
+      const bytes = await request.arrayBuffer();
+      const MAX_PHOTO_BYTES = 2 * 1024 * 1024; // 2MB — well above what client-side compression should ever produce; this is the backstop, not the target
+      if (bytes.byteLength === 0) return jsonResponse({ error: "Empty body" }, 400);
+      if (bytes.byteLength > MAX_PHOTO_BYTES) return jsonResponse({ error: "Photo too large (max 2MB after compression)" }, 413);
+
+      const photoId = crypto.randomUUID();
+      await env.PHOTO_BUCKET.put(tenantKey(companyId, `photo:${photoId}`), bytes, {
+        httpMetadata: { contentType },
+      });
+      return jsonResponse({ photoId });
+    }
+
+    // ---------------- View a photo (public read) ----------------
+    // Same unguessable-ID-plus-tenant pattern as /report. Long
+    // Cache-Control here is deliberate and NOT the same choice as
+    // /report and / above — a photo, once uploaded, never changes
+    // (a republish uploads new photos under new IDs rather than
+    // overwriting old ones), so aggressive caching is both safe and
+    // desirable here, unlike the report data which needs no-store.
+    if (request.method === "GET" && url.pathname.startsWith("/photo/")) {
+      const photoId = url.pathname.slice("/photo/".length);
+      const companyId = url.searchParams.get("biz");
+      if (!photoId || !companyId) return jsonResponse({ error: "Missing photo id or biz" }, 400);
+
+      const object = await env.PHOTO_BUCKET.get(tenantKey(companyId, `photo:${photoId}`));
+      if (!object) return jsonResponse({ error: "Not found" }, 404);
+
+      return new Response(object.body, {
+        headers: {
+          "Content-Type": object.httpMetadata?.contentType || "image/jpeg",
+          "Cache-Control": "public, max-age=31536000, immutable",
+        },
+      });
     }
 
     // ---------------- The actual homeowner-facing page ----------------

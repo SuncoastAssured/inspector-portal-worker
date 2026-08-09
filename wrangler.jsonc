@@ -7,5 +7,11 @@
       "binding": "PORTAL_KV",
       "id": "dfe34d7fc71b420391f85261696754b9"
     }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "PHOTO_BUCKET",
+      "bucket_name": "PASTE_YOUR_REAL_R2_BUCKET_NAME_HERE"
+    }
   ]
 }

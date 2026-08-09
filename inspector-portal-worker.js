@@ -70,7 +70,7 @@ function corsHeaders() {
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json", ...corsHeaders() },
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ...corsHeaders() },
   });
 }
 
@@ -184,8 +184,8 @@ function renderPortalPage(id, companyId) {
   *{ box-sizing:border-box; }
   body{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--sand); color:var(--ink); margin:0; padding:0; }
   .wrap{ max-width:620px; margin:0 auto; padding:20px 16px 60px; }
-  header{ text-align:center; padding:20px 0 10px; }
-  .logo{ max-width:120px; max-height:60px; margin-bottom:8px; }
+  header{ display:flex; align-items:center; justify-content:center; gap:12px; padding:20px 0 10px; text-align:left; }
+  .logo{ max-width:60px; max-height:60px; flex-shrink:0; }
   .company-name{ font-weight:700; font-size:18px; color:var(--navy); }
   .card{ background:#fff; border:1px solid var(--line); border-radius:14px; padding:20px; margin-top:16px; }
   .property-name{ font-size:22px; font-weight:700; color:var(--navy); margin:0 0 2px; }
@@ -199,7 +199,20 @@ function renderPortalPage(id, companyId) {
   .summary-chip .lbl{ font-size:11px; color:#5A6B75; text-transform:uppercase; letter-spacing:0.03em; }
   .photos{ display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin-top:16px; }
   .photos img{ width:100%; aspect-ratio:4/3; object-fit:cover; border-radius:8px; }
+  .visit-summary{ font-size:14px; line-height:1.5; color:var(--ink); margin:0 0 4px; }
+  .group-title{ font-size:15px; font-weight:700; color:var(--navy); margin:22px 0 8px; padding-top:4px; border-top:1px solid var(--line); }
+  .group-title:first-child{ border-top:none; margin-top:0; }
+  .item-row{ padding:10px 0; border-bottom:1px solid var(--line); }
+  .item-row:last-child{ border-bottom:none; }
+  .item-top{ display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
+  .item-label{ font-size:14px; font-weight:600; color:var(--ink); }
+  .item-chip{ font-size:11px; font-weight:700; letter-spacing:0.03em; padding:3px 9px; border-radius:20px; white-space:nowrap; flex-shrink:0; }
+  .item-chip.pass{ background:rgba(79,168,160,0.15); color:#2b7a6f; }
+  .item-chip.fail{ background:rgba(198,93,59,0.15); color:var(--coral); }
+  .item-chip.na{ background:var(--sand); color:#8a97a0; }
+  .item-note{ font-size:13px; color:#5A6B75; margin:5px 0 0; }
   .footer-note{ text-align:center; font-size:12px; color:#8a97a0; margin-top:24px; }
+  .contact-line{ text-align:center; font-size:13px; color:var(--navy); margin-top:14px; }
   .state{ text-align:center; padding:60px 20px; color:#5A6B75; }
   .hidden{ display:none; }
 </style>
@@ -233,9 +246,16 @@ function renderPortalPage(id, companyId) {
       </div>
 
       <div class="photos hidden" id="photosGrid"></div>
+
+      <p class="visit-summary hidden" id="visitSummaryText"></p>
     </div>
 
-    <p class="footer-note">This is a summary provided by your property inspection service.</p>
+    <div class="card hidden" id="sectionsCard">
+      <div id="sectionsContainer"></div>
+    </div>
+
+    <p class="contact-line hidden" id="contactLine"></p>
+    <p class="footer-note">This is the full report provided by your property inspection service.</p>
   </div>
 
 <script>
@@ -289,6 +309,68 @@ function renderPortalPage(id, companyId) {
       });
     }
 
+    if (r.visitSummary) {
+      const summaryEl = document.getElementById("visitSummaryText");
+      summaryEl.textContent = r.visitSummary; // textContent, not innerHTML — this is inspector-typed free text reaching a public page
+      summaryEl.classList.remove("hidden");
+    }
+
+    // Full itemized report, grouped by section — built entirely via
+    // DOM methods (createElement/textContent), never innerHTML with
+    // interpolated content. Every label and note here traces back to
+    // free text an inspector typed; treating it as a template string
+    // would be a real XSS opening on a page anyone with the link can
+    // load, license or not.
+    if (r.sections && r.sections.length) {
+      const container = document.getElementById("sectionsContainer");
+      const chipClass = { pass: "pass", fail: "fail", na: "na" };
+      const chipText = { pass: "PASS", fail: "FLAGGED", na: "N/A" };
+      r.sections.forEach(section => {
+        const title = document.createElement("div");
+        title.className = "group-title";
+        title.textContent = section.group || "General";
+        container.appendChild(title);
+
+        (section.items || []).forEach(item => {
+          const row = document.createElement("div");
+          row.className = "item-row";
+
+          const top = document.createElement("div");
+          top.className = "item-top";
+
+          const label = document.createElement("div");
+          label.className = "item-label";
+          label.textContent = item.label || "";
+          top.appendChild(label);
+
+          if (item.status) {
+            const chip = document.createElement("span");
+            chip.className = "item-chip " + (chipClass[item.status] || "na");
+            chip.textContent = chipText[item.status] || item.status.toUpperCase();
+            top.appendChild(chip);
+          }
+          row.appendChild(top);
+
+          if (item.note) {
+            const note = document.createElement("p");
+            note.className = "item-note";
+            note.textContent = item.note;
+            row.appendChild(note);
+          }
+
+          container.appendChild(row);
+        });
+      });
+      document.getElementById("sectionsCard").classList.remove("hidden");
+    }
+
+    if (r.companyPhone || r.companyEmail) {
+      const parts = [r.companyPhone, r.companyEmail].filter(Boolean);
+      const line = document.getElementById("contactLine");
+      line.textContent = "Questions about this report? " + parts.join(" · ");
+      line.classList.remove("hidden");
+    }
+
     document.getElementById("reportCard").classList.remove("hidden");
   } catch (err) {
     document.getElementById("loadingState").classList.add("hidden");
@@ -323,18 +405,37 @@ export default {
       const companyId = await getVerifiedCompanyId(request, body);
       if (!companyId) return jsonResponse({ error: "Unauthorized" }, 401);
 
-      const { reportId, propertyName, visitDate, conditionScore, passCount, failCount, totalCount, photos, companyName, companyLogo } = body || {};
+      const { reportId, propertyName, visitDate, visitSummary, conditionScore, passCount, failCount, totalCount, sections, photos, companyName, companyLogo, companyPhone, companyEmail } = body || {};
       if (!reportId || !visitDate) {
         return jsonResponse({ error: "reportId and visitDate are required" }, 400);
       }
 
-      // Deliberately narrow — the same discipline as Handyman's invoice
-      // endpoint stripping cost fields even if a caller sends them.
-      // Never carries the raw item-by-item checklist, notes, vendor
-      // contacts, or anything else not meant for the client's eyes.
+      // 2026-08-09: expanded from a summary-only card to the full
+      // itemized report, to actually compete with NestWatch's headline
+      // feature (the client reads the real report, not a status tile).
+      // Still deliberately narrow in a different way — every field
+      // below is copied individually, by name, never a raw pass-through
+      // of whatever the client sent. This is the same discipline as
+      // Handyman's invoice endpoint stripping cost fields even if a
+      // caller's payload includes them: only what's explicitly listed
+      // here can ever reach a homeowner, regardless of what the app
+      // happens to send in the future.
+      const cleanSections = Array.isArray(sections)
+        ? sections.slice(0, 40).map((s) => ({
+            group: s && s.group ? String(s.group).slice(0, 100) : "General",
+            items: Array.isArray(s && s.items)
+              ? s.items.slice(0, 120).map((it) => ({
+                  label: it && it.label ? String(it.label).slice(0, 300) : "",
+                  status: it && ["pass", "fail", "na"].includes(it.status) ? it.status : null,
+                  note: it && it.note ? String(it.note).slice(0, 2000) : "",
+                }))
+              : [],
+          })).filter((s) => s.items.length > 0)
+        : [];
+
       const cleanPhotos = Array.isArray(photos)
         ? photos.slice(0, 12).map((p) => ({
-            url: p && p.url ? String(p.url).slice(0, 2000) : null, // expects an already-hosted URL (e.g. from the PDF's own image handling), not a raw data URL — keeps KV record sizes sane
+            url: p && p.url ? String(p.url).slice(0, 2000) : null, // expects an already-hosted URL (e.g. via Cloudflare R2, not built yet), not a raw data URL — keeps KV record sizes sane
             caption: p && p.caption ? String(p.caption).slice(0, 200) : "",
           })).filter((p) => p.url)
         : [];
@@ -342,13 +443,17 @@ export default {
       const record = {
         propertyName: propertyName ? String(propertyName).slice(0, 150) : null,
         visitDate: String(visitDate).slice(0, 20),
+        visitSummary: visitSummary ? String(visitSummary).slice(0, 3000) : "",
         conditionScore: conditionScore != null ? Math.max(0, Math.min(100, parseInt(conditionScore, 10) || 0)) : null,
         passCount: passCount != null ? parseInt(passCount, 10) || 0 : null,
         failCount: failCount != null ? parseInt(failCount, 10) || 0 : null,
         totalCount: totalCount != null ? parseInt(totalCount, 10) || 0 : null,
+        sections: cleanSections,
         photos: cleanPhotos,
         companyName: companyName ? String(companyName).slice(0, 100) : null,
         companyLogo: companyLogo ? String(companyLogo).slice(0, 500000) : null, // a small logo data URL is fine; a full-size report photo set is not — that's what `photos[].url` is for
+        companyPhone: companyPhone ? String(companyPhone).slice(0, 30) : null,
+        companyEmail: companyEmail ? String(companyEmail).slice(0, 150) : null,
         publishedAt: Date.now(),
       };
       await env.PORTAL_KV.put(tenantKey(companyId, `report:${String(reportId).slice(0, 100)}`), JSON.stringify(record), {
@@ -384,7 +489,7 @@ export default {
       const id = url.searchParams.get("id");
       const companyId = url.searchParams.get("biz");
       return new Response(renderPortalPage(id, companyId), {
-        headers: { "Content-Type": "text/html; charset=utf-8" },
+        headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
       });
     }
 

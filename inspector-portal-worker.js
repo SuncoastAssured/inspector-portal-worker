@@ -185,7 +185,7 @@ function renderPortalPage(id, companyId) {
   body{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--sand); color:var(--ink); margin:0; padding:0; }
   .wrap{ max-width:620px; margin:0 auto; padding:20px 16px 60px; }
   header{ display:flex; align-items:center; justify-content:center; gap:12px; padding:20px 0 10px; text-align:left; }
-  .logo{ max-width:60px; max-height:60px; flex-shrink:0; }
+  .logo{ width:56px; height:56px; object-fit:contain; flex-shrink:0; }
   .company-name{ font-weight:700; font-size:18px; color:var(--navy); }
   .card{ background:#fff; border:1px solid var(--line); border-radius:14px; padding:20px; margin-top:16px; }
   .property-name{ font-size:22px; font-weight:700; color:var(--navy); margin:0 0 2px; }

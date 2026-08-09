@@ -160,6 +160,146 @@ async function getVerifiedCompanyId(request, body) {
   return null;
 }
 
+function renderPortalPage(id, companyId) {
+  if (!id || !companyId) {
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Assured Inspector</title><style>body{font-family:-apple-system,sans-serif;background:#F2EDE1;color:#1B3A4B;text-align:center;padding:60px 20px;}</style></head>
+<body><h1>No report specified</h1><p>This link is missing information needed to show a report. Check the link you were sent, or contact whoever sent it to you.</p></body></html>`;
+  }
+  // id/companyId are inserted only into a JS string literal below (not
+  // into raw HTML), and further escaped there — safe against the values
+  // containing HTML-special characters, since they never get parsed as
+  // markup themselves.
+  const safeId = JSON.stringify(id);
+  const safeCompanyId = JSON.stringify(companyId);
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Property Report</title>
+<style>
+  :root{ --navy:#1B3A4B; --seafoam:#4FA8A0; --sand:#F2EDE1; --coral:#C65D3B; --ink:#24303A; --line:#e3ddcf; }
+  *{ box-sizing:border-box; }
+  body{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--sand); color:var(--ink); margin:0; padding:0; }
+  .wrap{ max-width:620px; margin:0 auto; padding:20px 16px 60px; }
+  header{ text-align:center; padding:20px 0 10px; }
+  .logo{ max-width:120px; max-height:60px; margin-bottom:8px; }
+  .company-name{ font-weight:700; font-size:18px; color:var(--navy); }
+  .card{ background:#fff; border:1px solid var(--line); border-radius:14px; padding:20px; margin-top:16px; }
+  .property-name{ font-size:22px; font-weight:700; color:var(--navy); margin:0 0 2px; }
+  .visit-date{ font-size:14px; color:#5A6B75; margin:0 0 18px; }
+  .score-row{ display:flex; align-items:center; gap:16px; margin-bottom:16px; }
+  .score-circle{ width:72px; height:72px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:22px; font-weight:700; color:#fff; flex-shrink:0; }
+  .score-label{ font-size:13px; color:#5A6B75; }
+  .summary-row{ display:flex; gap:10px; margin:16px 0; }
+  .summary-chip{ flex:1; text-align:center; background:var(--sand); border-radius:10px; padding:10px 6px; }
+  .summary-chip .num{ font-size:20px; font-weight:700; }
+  .summary-chip .lbl{ font-size:11px; color:#5A6B75; text-transform:uppercase; letter-spacing:0.03em; }
+  .photos{ display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin-top:16px; }
+  .photos img{ width:100%; aspect-ratio:4/3; object-fit:cover; border-radius:8px; }
+  .footer-note{ text-align:center; font-size:12px; color:#8a97a0; margin-top:24px; }
+  .state{ text-align:center; padding:60px 20px; color:#5A6B75; }
+  .hidden{ display:none; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header id="brandHeader" class="hidden">
+      <img class="logo hidden" id="brandLogo">
+      <div class="company-name" id="brandName"></div>
+    </header>
+
+    <div class="state" id="loadingState">Loading report…</div>
+    <div class="state hidden" id="errorState">This report couldn't be found. The link may be incorrect, or the report may no longer be available.</div>
+
+    <div class="card hidden" id="reportCard">
+      <p class="property-name" id="propertyName"></p>
+      <p class="visit-date" id="visitDate"></p>
+
+      <div class="score-row" id="scoreRow">
+        <div class="score-circle" id="scoreCircle"></div>
+        <div>
+          <div style="font-weight:600;" id="scoreText"></div>
+          <div class="score-label">Overall condition</div>
+        </div>
+      </div>
+
+      <div class="summary-row">
+        <div class="summary-chip"><div class="num" id="passNum">–</div><div class="lbl">Passed</div></div>
+        <div class="summary-chip"><div class="num" id="failNum" style="color:var(--coral);">–</div><div class="lbl">Flagged</div></div>
+        <div class="summary-chip"><div class="num" id="totalNum">–</div><div class="lbl">Total items</div></div>
+      </div>
+
+      <div class="photos hidden" id="photosGrid"></div>
+    </div>
+
+    <p class="footer-note">This is a summary provided by your property inspection service.</p>
+  </div>
+
+<script>
+(async function() {
+  const id = ${safeId};
+  const biz = ${safeCompanyId};
+  try {
+    const res = await fetch("/report?id=" + encodeURIComponent(id) + "&biz=" + encodeURIComponent(biz));
+    if (!res.ok) throw new Error("not found");
+    const r = await res.json();
+
+    document.getElementById("loadingState").classList.add("hidden");
+
+    if (r.companyName) {
+      document.getElementById("brandHeader").classList.remove("hidden");
+      document.getElementById("brandName").textContent = r.companyName;
+    }
+    if (r.companyLogo) {
+      const img = document.getElementById("brandLogo");
+      img.src = r.companyLogo;
+      img.classList.remove("hidden");
+    }
+
+    document.getElementById("propertyName").textContent = r.propertyName || "Property Report";
+    document.getElementById("visitDate").textContent = r.visitDate ? "Visit date: " + r.visitDate : "";
+
+    if (r.conditionScore != null) {
+      const score = r.conditionScore;
+      const color = score >= 85 ? "#4FA8A0" : score >= 60 ? "#D8A23B" : "#C65D3B";
+      const label = score >= 85 ? "Excellent" : score >= 60 ? "Fair" : "Needs attention";
+      const circle = document.getElementById("scoreCircle");
+      circle.style.background = color;
+      circle.textContent = score;
+      document.getElementById("scoreText").textContent = label;
+    } else {
+      document.getElementById("scoreRow").classList.add("hidden");
+    }
+
+    document.getElementById("passNum").textContent = r.passCount != null ? r.passCount : "–";
+    document.getElementById("failNum").textContent = r.failCount != null ? r.failCount : "–";
+    document.getElementById("totalNum").textContent = r.totalCount != null ? r.totalCount : "–";
+
+    if (r.photos && r.photos.length) {
+      const grid = document.getElementById("photosGrid");
+      grid.classList.remove("hidden");
+      r.photos.forEach(p => {
+        const img = document.createElement("img");
+        img.src = p.url;
+        img.alt = p.caption || "";
+        grid.appendChild(img);
+      });
+    }
+
+    document.getElementById("reportCard").classList.remove("hidden");
+  } catch (err) {
+    document.getElementById("loadingState").classList.add("hidden");
+    document.getElementById("errorState").classList.remove("hidden");
+  }
+})();
+</script>
+</body>
+</html>`;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -232,6 +372,20 @@ export default {
       if (!record) return jsonResponse({ error: "Not found" }, 404);
 
       return jsonResponse(record);
+    }
+
+    // ---------------- The actual homeowner-facing page ----------------
+    // Serving the page from the same Worker (rather than a separate
+    // static site) keeps this to one deployment and avoids CORS
+    // entirely — the page's own fetch to /report is same-origin. This
+    // is the URL that actually gets shared with a homeowner:
+    // https://<this-worker>/?id=<reportId>&biz=<companyId>
+    if (request.method === "GET" && url.pathname === "/") {
+      const id = url.searchParams.get("id");
+      const companyId = url.searchParams.get("biz");
+      return new Response(renderPortalPage(id, companyId), {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
     }
 
     return jsonResponse({ error: "Not found" }, 404);
